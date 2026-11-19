@@ -48,7 +48,7 @@ WAIT_PHRASES = re.compile(
     re.IGNORECASE,
 )
 NO_WAIT_PHRASES = re.compile(
-    r"wait-for\.sh|wait-for\[|wait_for\b|poller (is )?(running|registered|started)|поллер запущен"
+    r"wait-for\.sh|wait-for\[|wait_for\b|poller (is )?(running|registered|started)|поллер запущен|ждать нечего|нечего ждать|задача закончена|nothing (to wait|left to wait)|no external event|task is (done|complete|finished)"
     r"|\b(sub-?agents?|teammates?|researchers?|workers?|background (task|agent|command|scan|job))\b"
     r"|\b(report|result)s? from (the )?(sub-?agents?|teammates?|researchers?)",
     re.IGNORECASE,
