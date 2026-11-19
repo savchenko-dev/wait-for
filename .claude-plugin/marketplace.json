@@ -1,0 +1,16 @@
+{
+  "name": "savchenko-dev",
+  "description": "Claude Code plugins by savchenko-dev",
+  "owner": {
+    "name": "Danil Savchenko",
+    "url": "https://github.com/savchenko-dev"
+  },
+  "plugins": [
+    {
+      "name": "wait-for",
+      "description": "Background poller for external events + a Stop hook that keeps the agent on the task until the wait is handled.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

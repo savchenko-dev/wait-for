@@ -1,0 +1,13 @@
+{
+  "name": "wait-for",
+  "version": "1.0.0",
+  "description": "Agents finish the job even when they have to wait: a background poller for external events (PR comments, access grants, deploys, data) plus a Stop hook that refuses to end the turn while a wait is unhandled.",
+  "author": {
+    "name": "Danil Savchenko",
+    "url": "https://github.com/savchenko-dev"
+  },
+  "homepage": "https://github.com/savchenko-dev/wait-for",
+  "license": "MIT",
+  "keywords": ["hooks", "polling", "autonomous", "wait", "stop-hook"],
+  "hooks": "./hooks/claude-hooks.json"
+}
