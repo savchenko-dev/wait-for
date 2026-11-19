@@ -80,7 +80,7 @@ cmd_start() {
     "deadline=$deadline" "pid=$$" "status=waiting" "polls=0" "last_exit=-1"
   echo "wait-for[$id]: polling every ${every}s until $(date -r "$deadline" '+%Y-%m-%d %H:%M' 2>/dev/null || date -d "@$deadline" '+%Y-%m-%d %H:%M'): $what"
   local polls=0 rc
-  trap 'write_state status=cancelled; exit 130' INT TERM
+  trap '[ -f "$FILE" ] && write_state status=cancelled; exit 130' INT TERM
   while :; do
     polls=$((polls + 1))
     [ -f "$FILE" ] || exit 130
