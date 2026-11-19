@@ -39,7 +39,12 @@ WAIT_PHRASES = re.compile(
     r"(\bwait(ing)? (for|until|on)\b|\bonce (access|the|it|they)\b.*\b(appears?|granted|arrives?|respond)|"
     r"\bwhen (access|the reviewer|the comments?|the data|it)\b.*\b(appears?|granted|arrives?|lands?)|"
     r"\bcheck back\b|\bre-?check later\b|\bpoll(ing)? (it|again) later\b|\bwill (poll|check) (it )?later\b|"
-    r"подожд|дожд[её]мся|как только (появ|дадут|прид|ответ)|когда (появится|дадут|придут|ответит))",
+    r"\bstill (pending|running|in progress|waiting|open|building|deploying)\b|\bnot (yet )?(ready|merged|landed|active|done|finished|granted|mergeable|approved)\b|"
+    r"\b(is|are|remains?) pending\b|\bhas(n't| not) (reached|landed|finished|replied|answered|been granted)\b|\bno (reply|answer|approval|ship-?it) yet\b|"
+    r"\b(port|rule|hole|role|access|grant|permission)\b[^.\n]{0,80}\b(not|isn't|aren't|hasn't)\b[^.\n]{0,30}\b(in|open|opened|applied|active|granted|listed|there|present)\b|"
+    r"(порт|дырк|роль|доступ|правил)[^.\n]{0,60}(не (открыт|выдан|активн|пророс|примен)|пока нет|ещё нет)|"
+    r"подожд|дожд[её]мся|как только (появ|дадут|прид|ответ)|когда (появится|дадут|придут|ответит)|"
+    r"ещё не (готов|доехал|замерж|активн|пророс|прош|ответ|выдан|пришл)|пока (нет|не (готов|доехал|прош|ответ|выдан|замерж))|не замержен|в ожидании|ожидает (ревью|аппрув|шип|деплой|ответ))",
     re.IGNORECASE,
 )
 NO_WAIT_PHRASES = re.compile(
