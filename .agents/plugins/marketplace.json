@@ -1,0 +1,12 @@
+{
+  "name": "savchenko-dev",
+  "interface": { "displayName": "savchenko-dev" },
+  "plugins": [
+    {
+      "name": "wait-for",
+      "source": { "source": "url", "url": "https://github.com/savchenko-dev/wait-for.git", "ref": "main" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

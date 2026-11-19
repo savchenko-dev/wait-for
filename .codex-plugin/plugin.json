@@ -1,0 +1,21 @@
+{
+  "name": "wait-for",
+  "version": "1.1.0",
+  "description": "Agents finish the job even when they have to wait: a poller for external events (PR comments, access grants, deploys, data) plus a Stop hook that keeps the session alive until the wait is handled.",
+  "author": { "name": "Danil Savchenko", "url": "https://github.com/savchenko-dev" },
+  "homepage": "https://github.com/savchenko-dev/wait-for",
+  "repository": "https://github.com/savchenko-dev/wait-for",
+  "license": "MIT",
+  "keywords": ["hooks", "polling", "autonomous", "wait", "stop-hook"],
+  "skills": "./skills/",
+  "hooks": "./hooks/codex-hooks.json",
+  "interface": {
+    "displayName": "wait-for",
+    "shortDescription": "Keep working while waiting on external events",
+    "longDescription": "A poller for review comments, access grants, deploys and data, plus a Stop hook that holds the session open until the wait is handled.",
+    "developerName": "Danil Savchenko",
+    "category": "Productivity",
+    "capabilities": ["Instructions", "Lifecycle hooks"],
+    "websiteURL": "https://github.com/savchenko-dev/wait-for"
+  }
+}

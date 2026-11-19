@@ -1,16 +1,16 @@
 # wait-for
 
-Make your **Claude Code** agent finish the job even when it has to wait for something
-it doesn't control: review comments on a PR, an access grant, a deploy landing, a CI
+Make your coding agent (**Claude Code, Codex, OpenCode, pi**) finish the job even when it has
+to wait for something it doesn't control: review comments on a PR, an access grant, a deploy landing, a CI
 check, a file or table that will appear later, a reply in a tracker.
 
 Without this, the agent writes *"I'll check back once the reviewer replies"* and stops.
 The task is stranded until you come back to the keyboard.
 
-With this, the agent starts a **background poller** and ends its turn. The harness
-re-invokes the agent the moment the poller exits, the agent handles the result and
-carries on. A **Stop hook** refuses to let a turn end while a wait is unhandled, and a
-**PreToolUse hook** turns hand-rolled `for … sleep` loops into the helper.
+With this, the agent starts a **background poller** and ends its turn. When the poller
+exits, the agent is woken up, handles the result and carries on. A **stop hook** refuses to
+let a turn end while a wait is unhandled, and a **tool guard** turns hand-rolled
+`for … sleep` loops into the helper.
 
 ```text
 agent:  the file is not there yet → wait-for.sh start --id data --every 60 --for 20m -- 'test -f data.json'
@@ -21,30 +21,22 @@ agent:  (re-invoked) reads data.json, reports the answer, wait-for.sh ack data
 
 ## Install
 
-**As a plugin**
+| Harness | How | Wake-up mechanism |
+|---|---|---|
+| **Claude Code** | `/plugin install wait-for --marketplace savchenko-dev/wait-for` | `run_in_background` Bash; the harness re-invokes the agent when the poller exits |
+| **Codex** | `codex plugin marketplace add savchenko-dev/wait-for`, then `codex plugin add wait-for@savchenko-dev`, then trust the hooks in `/hooks` | No background wake-up in Codex. The `Stop` hook runs in `--hold` mode: it keeps the turn open, watching the wait, and continues the turn when the poller finishes |
+| **OpenCode** | `./install.sh opencode`, or copy `opencode/wait-for.mjs` into `~/.config/opencode/plugins/` and list it under `"plugin"` in `opencode.json` | Native `wait_for` tool spawns the poller; on exit the plugin prompts the session. The idle event re-checks open waits |
+| **pi** | `pi install git:github.com/savchenko-dev/wait-for`, or `./install.sh pi` | Native `wait_for` tool; on exit `pi.sendMessage(…, {triggerTurn: true})`. In print mode (`-p`) the `agent_before_settle` hook holds the run instead |
 
-```text
-/plugin install wait-for --marketplace savchenko-dev/wait-for
-```
-
-<details>
-<summary>Older Claude Code, or from a terminal</summary>
-
-```bash
-claude plugin marketplace add savchenko-dev/wait-for
-claude plugin install wait-for@savchenko-dev
-```
-
-</details>
-
-**Without plugins**
+Manual install for any mix of harnesses, no plugin system needed:
 
 ```bash
 git clone https://github.com/savchenko-dev/wait-for
-./wait-for/install.sh          # copies into ~/.claude, registers hooks in settings.json
-./wait-for/install.sh --uninstall
+./wait-for/install.sh claude codex opencode pi     # pick the ones you use
+./wait-for/install.sh claude codex opencode pi --uninstall
 ```
 
+Shared files land in `~/.config/wait-for`; each harness gets its adapter and the skill.
 Needs `bash` and `python3`. macOS and Linux.
 
 ## What is inside
@@ -52,9 +44,12 @@ Needs `bash` and `python3`. macOS and Linux.
 | File | Role |
 |---|---|
 | `bin/wait-for.sh` | The poller. `start`, `list`, `ack`, `cancel`. State in `~/.claude/state/waits/<session>/`. |
-| `hooks/stop_while_waiting.py` | `Stop` + `SubagentStop`. Blocks the turn when a wait finished but was not acknowledged, when a wait is open but its poller died, or when the last message says "waiting for …" and no poller exists (fires once, never loops). |
-| `hooks/block_poll_loops.py` | `PreToolUse:Bash`. Denies `for/while/until … sleep N` loops and points to the helper. |
-| `skills/wait-for/SKILL.md` | Teaches the agent when and how to use it: intervals, deadlines, acknowledgement. |
+| `hooks/stop_while_waiting.py` | The decision engine, shared by every harness. Blocks the turn when a wait finished but was not acknowledged, when a wait is open but its poller died, or when the last message says "waiting for …" and no poller exists (fires once, never loops). `--hold` keeps the turn open on harnesses without background wake-up; `--check` is the CLI the JS adapters call. |
+| `hooks/block_poll_loops.py` | Denies `for/while/until … sleep N` loops and points to the helper. Same JSON contract on Claude Code and Codex; the JS adapters feed it the command. |
+| `hooks/claude-hooks.json`, `hooks/codex-hooks.json` | Hook wiring for the two JSON-hook harnesses. |
+| `opencode/wait-for.mjs` | OpenCode plugin (v1 API): `wait_for` tool, bash guard, idle handler, per-session env. |
+| `pi/wait-for.ts` | pi extension: `wait_for` tool, bash guard, `agent_before_settle` handler. |
+| `skills/wait-for/SKILL.md` | Teaches the agent when and how to use it: intervals, deadlines, acknowledgement. Loaded as a skill by all four harnesses. |
 
 ### The helper
 
@@ -84,7 +79,8 @@ That is what makes the harness wake it up on exit.
 
 ## Does the agent remember to use it?
 
-Measured on 2026-11-19 with Claude Code subagents. Two scenarios: a data file that
+Measured on 2026-11-19. Claude Code subagents first, then the other harnesses on the same
+delayed-file scenario. Two scenarios: a data file that
 appears after 150s, and a reviewer comment file that is empty for 180s. The prompt never
 mentioned the helper; the agent only had the skill in context.
 
@@ -99,6 +95,14 @@ mentioned the helper; the agent only had the skill in context.
 Nobody gave up or made up a value. Without the loop guard the smaller models improvised
 `for … sleep 10` loops in a third of the runs; with it, every model used the helper. Idle
 subagents were re-invoked when their background poller exited.
+
+On **pi** (gpt-oss-120b, print mode) the model called `wait_for` on its first turn with a 30s
+interval and a 5-minute deadline, the settle hook held the run until the file appeared, and the
+model read the value and acknowledged the wait. On **OpenCode** (same model, a `serve` session
+driven over HTTP) the model called `wait_for`, was prompted by the plugin when the poller
+exited, acknowledged the wait and read the file. In one-shot `opencode run` the process exits
+at idle, so the wake-up has nothing to prompt; use a session (TUI or `serve`). **Codex** was not available on the test machine; its hooks share the exact JSON contract
+with Claude Code's, and the hold mode was exercised directly against the engine.
 
 Known gaps: a model can still poll from `python -c … time.sleep`; nothing catches that.
 Pollers freeze when the laptop sleeps, so keep it awake for long waits (`caffeinate -i` on

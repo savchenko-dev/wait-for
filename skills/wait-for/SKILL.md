@@ -14,16 +14,21 @@ the agent when it exits. Use that.
 1. Write a check command that exits 0 only when you can proceed. A real probe, not `true`:
    `curl -sf` on the resource, an API call compared against a count you saved before starting,
    `test -f`, a SQL count, `gh pr view --json comments --jq 'length' | grep -qx 3`.
-2. Start the poller via Bash with `run_in_background: true`:
+2. Start the poller. How depends on the harness:
+   - **Claude Code**: Bash with `run_in_background: true`:
 
-   ```bash
-   ${CLAUDE_PLUGIN_ROOT}/bin/wait-for.sh start --id pr-123-comments --what "new review comments on PR 123" \
-     --every 300 --for 2d -- '<check command>'
-   ```
+     ```bash
+     ${CLAUDE_PLUGIN_ROOT}/bin/wait-for.sh start --id pr-123-comments --what "new review comments on PR 123" \
+       --every 300 --for 2d -- '<check command>'
+     ```
+
+   - **OpenCode / pi**: call the `wait_for` tool with `action=start`, `id`, `what`, `check`, `every`, `for`.
+   - **Codex**: run the same command detached, appending `>/dev/null 2>&1 &`. The Stop hook keeps
+     the session alive until the poller finishes.
 
 3. End the turn, saying what you are waiting for: condition, interval, deadline.
-4. When it exits (0 = condition met, 2 = deadline) you are re-invoked. Read its output, do the
-   next step, then run `${CLAUDE_PLUGIN_ROOT}/bin/wait-for.sh ack <id>`. On a timeout, tell the
+4. When it exits (0 = condition met, 2 = deadline) you are woken up. Read its output, do the
+   next step, then acknowledge: `${CLAUDE_PLUGIN_ROOT}/bin/wait-for.sh ack <id>` or `wait_for(action=ack)`. On a timeout, tell the
    user and stop; never poll forever.
 
 ## Rules

@@ -1,25 +1,39 @@
 #!/usr/bin/env python3
-"""Stop / SubagentStop hook: do not let a turn end while an external wait is unhandled.
+"""Decision engine for "do not end the turn while an external wait is unhandled".
 
-Reads the state written by wait-for.sh. Blocks when:
-  - a wait is `done` or `timeout` and has not been acknowledged (result not handled),
-  - a wait is `waiting` but its poller process is dead (never ran in background, got killed),
-  - no wait is recorded, but the last assistant message says it is waiting on something
-    external (heuristic; fires once per stop thanks to stop_hook_active).
-A `waiting` entry with a live poller lets the turn end: the harness re-invokes the agent when
-the background poller exits. Fails open on any error.
+Modes
+  (default)         Claude Code / Codex hook: reads the Stop|SubagentStop JSON on stdin, prints
+                    {"decision":"block","reason":...} or {} (Codex requires JSON on allow).
+  --hold SECONDS    Codex: there is no background wake-up, so while a poller is alive the hook
+                    keeps the turn open, watching the state files until a wait finishes or the
+                    hold expires. Then it blocks with the result, or with "still waiting, end
+                    the turn again" so the next hold starts. Bounded by the waits' deadlines.
+  --check           pi / OpenCode adapters: --session ID (repeatable) --text "last assistant
+                    message" [--nudged]; prints the same JSON. --nudged plays the role of
+                    stop_hook_active for the phrase heuristic.
+
+Blocks when a wait is `done`/`timeout` and not acknowledged, when a wait is `waiting` but its
+poller process is dead, or when no wait exists but the last assistant message says it is waiting
+on something external (once per stop). A live poller lets the turn end on harnesses that wake
+the agent when a background command exits. Fails open.
 """
+import argparse
 import glob
 import json
 import os
 import re
 import sys
+import time
 
 CFG = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
 ROOT = os.environ.get("WAIT_FOR_STATE_DIR") or os.path.join(CFG, "state", "waits")
-PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT")
-HELPER = (os.path.join(PLUGIN_ROOT, "bin", "wait-for.sh") if PLUGIN_ROOT
-          else os.environ.get("WAIT_FOR_BIN") or os.path.join(CFG, "hooks", "wait-for.sh"))
+PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.environ.get("PLUGIN_ROOT")
+HERE = os.path.dirname(os.path.abspath(__file__))
+HELPER = (os.environ.get("WAIT_FOR_BIN")
+          or (os.path.join(PLUGIN_ROOT, "bin", "wait-for.sh") if PLUGIN_ROOT else None)
+          or (os.path.join(HERE, "..", "bin", "wait-for.sh") if os.path.exists(os.path.join(HERE, "..", "bin", "wait-for.sh")) else None)
+          or os.path.join(HERE, "wait-for.sh"))
+HELPER = os.path.normpath(HELPER)
 
 WAIT_PHRASES = re.compile(
     r"(\bwait(ing)? (for|until|on)\b|\bonce (access|the|it|they)\b.*\b(appears?|granted|arrives?|respond)|"
@@ -28,7 +42,12 @@ WAIT_PHRASES = re.compile(
     r"подожд|дожд[её]мся|как только (появ|дадут|прид|ответ)|когда (появится|дадут|придут|ответит))",
     re.IGNORECASE,
 )
-NO_WAIT_PHRASES = re.compile(r"wait-for\.sh|wait-for\[|poller (is )?(running|registered|started)|поллер запущен", re.IGNORECASE)
+NO_WAIT_PHRASES = re.compile(
+    r"wait-for\.sh|wait-for\[|wait_for\b|poller (is )?(running|registered|started)|поллер запущен"
+    r"|\b(sub-?agents?|teammates?|researchers?|workers?|background (task|agent|command))\b.*\b(report|finish|complete|return|notif)"
+    r"|\b(report|result)s? from (the )?(sub-?agents?|teammates?|researchers?)",
+    re.IGNORECASE,
+)
 
 
 def alive(pid):
@@ -59,54 +78,93 @@ def last_assistant_text(path):
     return text
 
 
-def block(reason):
-    print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
+def scan(sessions):
+    dead, unhandled, live = [], [], []
+    for session in sessions:
+        for p in glob.glob(os.path.join(ROOT, session, "*.json")):
+            try:
+                s = json.load(open(p))
+            except Exception:
+                continue
+            st = s.get("status")
+            if st == "waiting":
+                (live if alive(s.get("pid", 0)) else dead).append(s)
+            elif st in ("done", "timeout"):
+                unhandled.append(s)
+    return dead, unhandled, live
+
+
+def decide(sessions, text, nudged, hold=0, start_hint=""):
+    dead, unhandled, live = scan(sessions)
+    if live and hold > 0 and not unhandled and not dead:
+        end = time.time() + hold
+        while time.time() < end:
+            time.sleep(min(5, max(1, end - time.time())))
+            dead, unhandled, live = scan(sessions)
+            if unhandled or dead or not live:
+                break
+        else:
+            names = ", ".join(str(s.get("id")) for s in live)
+            return {"decision": "block", "reason":
+                    f"Still waiting on {names}; nothing has happened yet. Do not poll yourself: "
+                    f"just end your turn again and the wait continues."}
+    if unhandled:
+        names = ", ".join(f'{s.get("id")} ({s.get("status")})' for s in unhandled)
+        return {"decision": "block", "reason":
+                f"A wait finished but its result was not handled: {names}. Check the condition yourself "
+                f"(re-run the check command or read the resource), do the next step of the task (or report "
+                f"the timeout to the user), then run `{HELPER} ack <id>`. If you need to keep waiting, start "
+                f"a new wait.{start_hint}"}
+    if dead:
+        names = ", ".join(str(s.get("id")) for s in dead)
+        return {"decision": "block", "reason":
+                f"Wait {names} is marked waiting but its poller is not running. Restart it "
+                f"({HELPER} start --id {dead[0].get('id')} ...){start_hint}, or `{HELPER} cancel "
+                f"{dead[0].get('id')}` if it is no longer needed."}
+    if live or nudged:
+        return {}
+    if text and WAIT_PHRASES.search(text) and not NO_WAIT_PHRASES.search(text):
+        return {"decision": "block", "reason":
+                "You seem to be ending the turn while waiting on an external event (access, review comments, "
+                f"data), but no poller is registered. Either start one: `{HELPER} start --id <slug> --what '...' "
+                f"--every <sec> --for <duration> -- '<check command that exits 0 when ready>'`{start_hint}, then end "
+                "the turn; or state explicitly that there is nothing to wait for and the task is done."}
+    return {}
 
 
 def main():
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--hold", type=int, default=0)
+    ap.add_argument("--check", action="store_true")
+    ap.add_argument("--session", action="append", default=[])
+    ap.add_argument("--text", default="")
+    ap.add_argument("--nudged", action="store_true")
+    ap.add_argument("--start-hint", default="")
+    a = ap.parse_args()
+    if a.check:
+        sessions = a.session or ["nosession"]
+        print(json.dumps(decide(sessions, a.text, a.nudged, a.hold, a.start_hint), ensure_ascii=False))
+        return
     try:
         data = json.load(sys.stdin)
     except Exception:
+        print("{}")
         return
-    session = data.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
-    d = os.path.join(ROOT, session)
-    dead, unhandled, live = [], [], []
-    for p in glob.glob(os.path.join(d, "*.json")):
-        try:
-            s = json.load(open(p))
-        except Exception:
-            continue
-        st = s.get("status")
-        if st == "waiting":
-            (live if alive(s.get("pid", 0)) else dead).append(s)
-        elif st in ("done", "timeout"):
-            unhandled.append(s)
-    if unhandled:
-        names = ", ".join(f'{s.get("id")} ({s.get("status")})' for s in unhandled)
-        return block(
-            f"A wait finished but its result was not handled: {names}. Read the poller output, do the next "
-            f"step of the task (or report the timeout to the user), then run `{HELPER} ack <id>`. "
-            f"If you need to keep waiting, start a new `{HELPER} start` in the background.")
-    if dead:
-        names = ", ".join(str(s.get("id")) for s in dead)
-        return block(
-            f"Wait {names} is marked waiting but its poller is not running. Restart it with "
-            f"`{HELPER} start --id {dead[0].get('id')} ...` via Bash with run_in_background=true, "
-            f"or `{HELPER} cancel {dead[0].get('id')}` if it is no longer needed.")
-    if live or data.get("stop_hook_active"):
-        return
-    text = last_assistant_text(data.get("transcript_path") or "")
-    if text and WAIT_PHRASES.search(text) and not NO_WAIT_PHRASES.search(text):
-        return block(
-            "You seem to be ending the turn while waiting on an external event (access, review comments, data), "
-            f"but no poller is registered. Either start `{HELPER} start --id <slug> --what '...' --every <sec> "
-            "--for <duration> -- '<check command that exits 0 when ready>'` via Bash with run_in_background=true "
-            "and then end the turn, or state explicitly that there is nothing to wait for and the task is done.")
+    session = data.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "nosession"
+    text = data.get("last_assistant_message") or last_assistant_text(data.get("transcript_path") or "")
+    hold = a.hold if not data.get("stop_hook_active") or a.hold else 0
+    nudged = bool(data.get("stop_hook_active")) and not a.hold
+    start_hint = ""
+    if a.hold:
+        start_hint = " (run it detached: append `>/dev/null 2>&1 &`; the Stop hook keeps the session alive until it finishes)"
+    else:
+        start_hint = " via Bash with run_in_background=true"
+    print(json.dumps(decide([session], text, nudged, hold, start_hint), ensure_ascii=False))
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception:
-        pass
+        print("{}")
     sys.exit(0)

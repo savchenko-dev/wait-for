@@ -1,0 +1,23 @@
+{
+  "name": "wait-for-agent",
+  "version": "1.1.0",
+  "description": "Agents finish the job even when they have to wait: a poller for external events plus hooks that keep the session on the task. Claude Code, Codex, OpenCode, pi.",
+  "license": "MIT",
+  "repository": "github:savchenko-dev/wait-for",
+  "keywords": ["pi-package", "claude-code", "codex", "opencode", "agent", "hooks"],
+  "type": "module",
+  "pi": {
+    "extensions": ["./pi/wait-for.ts"],
+    "skills": ["./skills"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@sinclair/typebox": "*",
+    "@opencode-ai/plugin": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@sinclair/typebox": { "optional": true },
+    "@opencode-ai/plugin": { "optional": true }
+  }
+}
